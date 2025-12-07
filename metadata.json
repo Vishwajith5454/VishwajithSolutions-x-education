@@ -1,0 +1,7 @@
+{
+  "name": "VISHWAJITH SOLUTIONS x EDUCATION",
+  "description": "A futuristic educational platform featuring dual login flows for Administrators and Candidates, complete with course purchasing and dashboard capabilities.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
