@@ -4,8 +4,8 @@ import { Course } from "./types";
 // Note: Price 7.15 USD * 84 INR ≈ 600 INR
 const PRICE_INR_600_IN_USD = 7.15; 
 
-// STRICT PATH: Points exactly to the folder structure
-export const PAYMENT_QR_PATH = "public/assets/gpay_qr.png"; 
+// STRICT PATH: Points exactly to the assets folder in the build output
+export const PAYMENT_QR_PATH = "/assets/gpay_qr.png"; 
 
 export const MOCK_COURSES: Course[] = [
   // --- CLASS 10 (Active) ---
@@ -16,7 +16,7 @@ export const MOCK_COURSES: Course[] = [
     instructor: "Next Toppers Team",
     price: PRICE_INR_600_IN_USD,
     duration: "Full Year",
-    thumbnail: "public/assets/abhay_cbse_10.png", 
+    thumbnail: "/assets/abhay_cbse_10.png", 
     tags: ["CBSE", "Class 10", "Live"],
     category: "Class 10",
     status: "active"
@@ -28,7 +28,7 @@ export const MOCK_COURSES: Course[] = [
     instructor: "Abhay Team Bihar",
     price: PRICE_INR_600_IN_USD,
     duration: "Full Year",
-    thumbnail: "public/assets/abhay_bihar_10.png", 
+    thumbnail: "/assets/abhay_bihar_10.png", 
     tags: ["Bihar Board", "Hindi Medium", "Class 10"],
     category: "Class 10",
     status: "active"
@@ -40,7 +40,7 @@ export const MOCK_COURSES: Course[] = [
     instructor: "Abhay Team UP",
     price: PRICE_INR_600_IN_USD,
     duration: "Full Year",
-    thumbnail: "public/assets/abhay_up_10.png", 
+    thumbnail: "/assets/abhay_up_10.png", 
     tags: ["UP Board", "Hindi Medium", "Class 10"],
     category: "Class 10",
     status: "active"

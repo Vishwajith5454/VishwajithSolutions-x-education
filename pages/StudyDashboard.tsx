@@ -71,8 +71,12 @@ export const StudyDashboard: React.FC = () => {
              src={activeUrl}
              className="absolute inset-0 w-full h-full border-0"
              title="Course Content"
-             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
              allowFullScreen
+             // CRITICAL SECURITY: 
+             // 1. allow-top-navigation is REMOVED to prevent redirects
+             // 2. referrerPolicy="no-referrer" prevents origin leakage
+             sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
+             referrerPolicy="no-referrer"
            />
         </div>
       </div>
