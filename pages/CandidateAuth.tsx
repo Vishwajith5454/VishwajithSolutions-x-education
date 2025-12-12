@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
 import { Button, Input, Toast } from '../components/UI';
-import { MapPin, AlertTriangle, ShieldCheck, CheckSquare, Square } from 'lucide-react';
+import { MapPin, AlertTriangle, ShieldCheck, CheckSquare, Square, RefreshCw } from 'lucide-react';
 import { mockService } from '../services/mockService';
 import { LocationCoords } from '../types';
 
@@ -30,7 +31,7 @@ export const CandidateAuth: React.FC = () => {
     }
   }, [user, navigate]);
 
-  // Load remembered email on mount (only for login mode effectively)
+  // Load remembered email on mount
   useEffect(() => {
     if (!isRegisterMode) {
       const savedEmail = localStorage.getItem('remembered_email');
@@ -41,29 +42,62 @@ export const CandidateAuth: React.FC = () => {
     }
   }, [isRegisterMode]);
 
-  const getLocation = (): Promise<LocationCoords> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error("Geolocation is not supported by your browser."));
-      } else {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            resolve({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude
-            });
-          },
-          (err) => {
-            let msg = "Location access denied. Please enable location services.";
-            if (err.code === 1) msg = "Location permission denied.";
-            else if (err.code === 2) msg = "Location unavailable. Check GPS/Network.";
-            else if (err.code === 3) msg = "Location request timed out.";
-            reject(new Error(msg));
-          },
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
+  // --- ROBUST LOCATION STRATEGY ---
+  const getLocation = async (): Promise<LocationCoords> => {
+    if (!navigator.geolocation) {
+      throw new Error("Geolocation is not supported by your browser.");
+    }
+
+    // Wrapper to make navigator.geolocation async/await compatible
+    const getPosition = (options: PositionOptions): Promise<GeolocationPosition> => {
+      return new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, options);
+      });
+    };
+
+    try {
+      console.log("Attempting Tier 1 Location (High Accuracy)...");
+      // ATTEMPT 1: High Accuracy (GPS)
+      // Fast timeout (5s) because if GPS is available, it connects fast.
+      // If it hangs, we want to fail fast and switch to fallback.
+      const position = await getPosition({ 
+        enableHighAccuracy: true, 
+        timeout: 5000, 
+        maximumAge: 10000 // Accept positions up to 10s old
+      });
+      
+      return {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude
+      };
+
+    } catch (err: any) {
+      // If Permission Denied, stop immediately.
+      if (err.code === 1) throw new Error("Location permission denied. Please allow access in browser settings.");
+
+      console.warn("Tier 1 Location failed/timed out. Switching to Tier 2 (Network)...", err.message);
+      
+      // ATTEMPT 2: Network Location (WiFi/Cell)
+      // Much more reliable indoors.
+      try {
+        const fallbackPosition = await getPosition({ 
+          enableHighAccuracy: false, // Use network triangulation
+          timeout: 15000,            // Give it 15 seconds
+          maximumAge: 60000          // Accept positions up to 1 min old
+        });
+
+        return {
+          latitude: fallbackPosition.coords.latitude,
+          longitude: fallbackPosition.coords.longitude
+        };
+      } catch (fallbackErr: any) {
+        let msg = "Location check failed.";
+        if (fallbackErr.code === 1) msg = "Location permission denied.";
+        else if (fallbackErr.code === 2) msg = "Location signal unavailable. Check GPS/Network.";
+        else if (fallbackErr.code === 3) msg = "Location request timed out. Please check connection.";
+        throw new Error(msg);
       }
-    });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -75,9 +109,8 @@ export const CandidateAuth: React.FC = () => {
 
     try {
       // 1. Get Location
-      console.log("Requesting location...");
       const location = await getLocation();
-      console.log("Location acquired:", location);
+      console.log("Location acquired successfully:", location);
 
       // 2. Auth Logic
       setStatus('verifying');
@@ -92,7 +125,7 @@ export const CandidateAuth: React.FC = () => {
         setToast({ msg: "Identity Verified. Redirecting...", type: 'success' });
       }
 
-      // Handle Remember Me (Only relevant for login generally, but we process it here)
+      // Handle Remember Me
       if (!isRegisterMode) {
         if (rememberMe) {
           localStorage.setItem('remembered_email', cleanEmail);
@@ -104,8 +137,6 @@ export const CandidateAuth: React.FC = () => {
       // Success State
       setStatus('success');
       
-      // Delay setting global user to allow the success animation to play
-      // This prevents immediate re-render/redirect before the user sees "Access Granted"
       setTimeout(() => {
         setUser(authenticatedUser);
         navigate('/courses', { replace: true });
@@ -116,11 +147,12 @@ export const CandidateAuth: React.FC = () => {
       setStatus('idle');
       
       let msg = "An unexpected error occurred.";
-      if (err?.message) {
-        msg = err.message;
-      } else if (typeof err === 'string') {
-        msg = err;
-      }
+      if (err?.message) msg = err.message;
+      else if (typeof err === 'string') msg = err;
+
+      // User friendly error mapping
+      if (msg.includes("auth/invalid-email")) msg = "Invalid email address format.";
+      if (msg.includes("auth/weak-password")) msg = "Password should be at least 6 characters.";
 
       setError(msg);
       setToast({ msg: msg, type: 'error' });
@@ -129,8 +161,8 @@ export const CandidateAuth: React.FC = () => {
 
   const getButtonText = () => {
     switch (status) {
-      case 'acquiring_location': return 'Acquiring GPS Coords...';
-      case 'verifying': return 'Verifying Credentials & Location...';
+      case 'acquiring_location': return 'Triangulating Position...';
+      case 'verifying': return 'Verifying Credentials...';
       case 'success': return 'Access Granted';
       default: return isRegisterMode ? 'Register Candidate' : 'Access Portal';
     }
@@ -152,7 +184,6 @@ export const CandidateAuth: React.FC = () => {
               if(status === 'idle') { 
                 setIsRegisterMode(false); 
                 setError(''); 
-                // Restore remembered email if exists
                 const saved = localStorage.getItem('remembered_email');
                 if (saved) {
                   setEmail(saved);
@@ -170,7 +201,6 @@ export const CandidateAuth: React.FC = () => {
               if(status === 'idle') { 
                 setIsRegisterMode(true); 
                 setError(''); 
-                // Clear fields for registration
                 setEmail('');
                 setPassword('');
                 setUsername('');
@@ -190,7 +220,7 @@ export const CandidateAuth: React.FC = () => {
           <p className="text-slate-400 mb-8 text-sm">
             {isRegisterMode 
               ? 'Create a secure account. Your location will be bound to your identity.' 
-              : 'Sign in to access your dashboard. strict location verification required.'}
+              : 'Sign in to access your dashboard. Strict location verification required.'}
           </p>
 
           {error && (
@@ -232,7 +262,6 @@ export const CandidateAuth: React.FC = () => {
               disabled={status !== 'idle'}
             />
 
-            {/* Remember Me Checkbox (Only on Login) */}
             {!isRegisterMode && (
               <div className="flex items-center gap-2 cursor-pointer group" onClick={() => setRememberMe(!rememberMe)}>
                 <div className={`transition-colors duration-300 ${rememberMe ? 'text-cyan-400' : 'text-slate-600 group-hover:text-slate-400'}`}>
@@ -244,11 +273,18 @@ export const CandidateAuth: React.FC = () => {
               </div>
             )}
 
-            <div className="pt-2 text-xs text-slate-500 flex items-center gap-2">
-              <MapPin size={12} className={status === 'acquiring_location' ? "text-fuchsia-400 animate-bounce" : "text-cyan-500"} />
-              <span>
-                {status === 'acquiring_location' ? 'Reading satellite position...' : 'Location will be captured securely upon submission.'}
-              </span>
+            <div className="pt-2 text-xs text-slate-500 flex items-center gap-2 min-h-[20px]">
+              {status === 'acquiring_location' ? (
+                <>
+                   <RefreshCw size={12} className="text-fuchsia-400 animate-spin" />
+                   <span className="text-fuchsia-400">Syncing with satellites...</span>
+                </>
+              ) : (
+                <>
+                   <MapPin size={12} className="text-cyan-500" />
+                   <span>Secure geo-tagging active.</span>
+                </>
+              )}
             </div>
 
             <Button 

@@ -1,83 +1,50 @@
-
-import { initializeApp } from "firebase/app";
-import { 
-  getAuth, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut, 
-  onAuthStateChanged,
-  User as FirebaseUser
-} from "firebase/auth";
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  updateDoc, 
-  arrayUnion,
-  collection,
-  query,
-  where,
-  getDocs,
-  addDoc
-} from "firebase/firestore";
 import { Course, Order, User, LocationCoords, RedemptionCode } from "../types";
 
-// ============================================================================
-// ⚠️ IMPORTANT: YOUR FIREBASE CONFIGURATION
-// ============================================================================
-const firebaseConfig = {
-    apiKey: "AIzaSyCAeAzMeeXZcUB8oexjaSFql7oBfzb033A",
-    authDomain: "vishwajith-education.firebaseapp.com",
-    projectId: "vishwajith-education",
-    storageBucket: "vishwajith-education.firebasestorage.app",
-    messagingSenderId: "878169984314",
-    appId: "1:878169984314:web:4ab6ec67ab3bb175e11403",
-    measurementId: "G-XTGWKX7BK2"
-  };
+// Helper to simulate DB delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-
-// Constants
+const SESSION_KEY = 'vishwajith_session_uid';
+const USERS_KEY = 'vishwajith_users_db';
+const CODES_KEY = 'vishwajith_codes_db';
+const ORDERS_KEY = 'vishwajith_orders_db';
 const SESSION_DURATION_MS = 2 * 60 * 60 * 1000; // 2 Hours
 
 type AuthStateListener = (user: User | null) => void;
 
+// Extended user type for internal storage (includes password)
+interface DBUser extends User {
+  password?: string;
+}
+
 class AuthService {
   private currentUser: User | null = null;
   private listeners: AuthStateListener[] = [];
-  private isRestoring = true;
 
   constructor() {
-    // Listen to Firebase Auth state changes
-    onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // User is authenticated in Firebase, now fetch their Profile from Firestore
-        try {
-          await this.restoreUserProfile(firebaseUser.uid);
-        } catch (e) {
-          console.error("Failed to restore profile:", e);
-          this.logout();
-        }
-      } else {
-        // User is signed out
-        this.currentUser = null;
-        this.notifyListeners();
-      }
-      this.isRestoring = false;
-    });
+    this.init();
   }
 
-  // --- Subscription System ---
+  private init() {
+    const uid = localStorage.getItem(SESSION_KEY);
+    if (uid) {
+      const user = this.getUserById(uid);
+      if (user) {
+        // Check expiry
+        if (user.sessionExpiry && Date.now() > user.sessionExpiry) {
+          this.logout();
+        } else {
+          this.currentUser = user;
+        }
+      }
+    }
+    // Notify after initialization
+    setTimeout(() => this.notifyListeners(), 0);
+  }
+
   subscribe(listener: AuthStateListener) {
     this.listeners.push(listener);
-    // Immediately notify with current state
-    if (!this.isRestoring) {
-      listener(this.currentUser);
-    }
+    // Notify immediately with current state
+    listener(this.currentUser);
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
     };
@@ -87,23 +54,56 @@ class AuthService {
     this.listeners.forEach(listener => listener(this.currentUser));
   }
 
-  // --- Internal Helpers ---
-  private async restoreUserProfile(uid: string) {
-    const userDocRef = doc(db, "users", uid);
-    const userDoc = await getDoc(userDocRef);
+  // --- LocalStorage Helpers ---
 
-    if (userDoc.exists()) {
-      this.currentUser = userDoc.data() as User;
-      
-      // Check if session is expired strictly based on DB data
-      if (this.currentUser.sessionExpiry && Date.now() > this.currentUser.sessionExpiry) {
-        console.warn("Session expired based on DB record. Logging out.");
-        await this.logout();
-      } else {
-        this.notifyListeners(); // Update UI with restored user
-      }
+  private getUsers(): DBUser[] {
+    try {
+      const str = localStorage.getItem(USERS_KEY);
+      return str ? JSON.parse(str) : [];
+    } catch (e) {
+      return [];
     }
   }
+
+  private saveUsers(users: DBUser[]) {
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  }
+
+  private getUserById(uid: string): User | null {
+    const users = this.getUsers();
+    const user = users.find(u => u.id === uid);
+    if (!user) return null;
+    const { password, ...safeUser } = user;
+    return safeUser;
+  }
+
+  private getCodes(): RedemptionCode[] {
+    try {
+      const str = localStorage.getItem(CODES_KEY);
+      return str ? JSON.parse(str) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  private saveCodes(codes: RedemptionCode[]) {
+    localStorage.setItem(CODES_KEY, JSON.stringify(codes));
+  }
+
+  private getOrders(): Order[] {
+    try {
+      const str = localStorage.getItem(ORDERS_KEY);
+      return str ? JSON.parse(str) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  private saveOrders(orders: Order[]) {
+    localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
+  }
+
+  // --- Logic ---
 
   private getDistanceFromLatLonInKm(lat1: number, lon1: number, lat2: number, lon2: number) {
     if (typeof lat1 !== 'number' || typeof lon1 !== 'number' || typeof lat2 !== 'number' || typeof lon2 !== 'number') {
@@ -124,7 +124,7 @@ class AuthService {
     return deg * (Math.PI / 180);
   }
 
-  // --- Public Auth Methods ---
+  // --- Public Methods ---
 
   async registerCandidate(
     email: string, 
@@ -132,114 +132,97 @@ class AuthService {
     password: string, 
     location: LocationCoords
   ): Promise<User> {
-    try {
-      const normalizedEmail = email.toLowerCase().trim();
-      
-      const userCredential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
-      const uid = userCredential.user.uid;
+    await delay(500); // Simulate network
+    
+    const normalizedEmail = email.toLowerCase().trim();
+    const users = this.getUsers();
 
-      // Set initial session expiry for 2 hours from now
-      const initialExpiry = Date.now() + SESSION_DURATION_MS;
-
-      const newUserProfile: User = {
-        id: uid,
-        email: normalizedEmail,
-        name: name,
-        purchasedCourses: [],
-        location: location,
-        sessionExpiry: initialExpiry // SAVE TO DB
-      };
-
-      await setDoc(doc(db, "users", uid), newUserProfile);
-
-      this.currentUser = newUserProfile;
-      this.notifyListeners();
-      
-      return newUserProfile;
-
-    } catch (error: any) {
-      console.error("Registration Error:", error);
-      if (error.code === 'auth/email-already-in-use') {
-        throw new Error("User already registered. Please login directly.");
-      }
-      throw new Error(error.message || "Registration failed.");
+    if (users.some(u => u.email === normalizedEmail)) {
+      throw new Error("User already registered. Please login directly.");
     }
+
+    const uid = 'user_' + Math.random().toString(36).substr(2, 9);
+    const initialExpiry = Date.now() + SESSION_DURATION_MS;
+
+    const newUser: DBUser = {
+      id: uid,
+      email: normalizedEmail,
+      name,
+      password, // Store password
+      purchasedCourses: [],
+      location,
+      sessionExpiry: initialExpiry
+    };
+
+    users.push(newUser);
+    this.saveUsers(users);
+    
+    // Set session
+    localStorage.setItem(SESSION_KEY, uid);
+    
+    const { password: _, ...safeUser } = newUser;
+    this.currentUser = safeUser;
+    this.notifyListeners();
+
+    return safeUser;
   }
 
   async loginCandidate(email: string, password: string, currentLocation: LocationCoords): Promise<User> {
-    try {
-      const normalizedEmail = email.toLowerCase().trim();
+    await delay(500);
+    
+    const normalizedEmail = email.toLowerCase().trim();
+    const users = this.getUsers();
+    const user = users.find(u => u.email === normalizedEmail);
 
-      const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-      const uid = userCredential.user.uid;
-
-      const userDocRef = doc(db, "users", uid);
-      const userDoc = await getDoc(userDocRef);
-
-      if (!userDoc.exists()) {
-        throw new Error("User profile not found in database.");
-      }
-
-      let userData = userDoc.data() as User;
-
-      // STRICT Location Check
-      if (userData.location) {
-        const distance = this.getDistanceFromLatLonInKm(
-          userData.location.latitude,
-          userData.location.longitude,
-          currentLocation.latitude,
-          currentLocation.longitude
-        );
-
-        console.log(`[Location Verification] Dist: ${distance.toFixed(4)} km`);
-
-        if (distance > 15) {
-          await signOut(auth);
-          throw new Error(`Security Alert: Location mismatch. You are ${distance.toFixed(1)}km away from your registered location.`);
-        }
-      }
-
-      // SESSION LOGIC: Check Firestore
-      const now = Date.now();
-      let newExpiry = userData.sessionExpiry;
-      let needsUpdate = false;
-
-      // If no expiry exists or it has passed, create a NEW session
-      if (!newExpiry || now > newExpiry) {
-        newExpiry = now + SESSION_DURATION_MS;
-        needsUpdate = true;
-      } 
-      // Else: Use the existing 'newExpiry' (Do nothing, just restore it)
-
-      if (needsUpdate) {
-        await updateDoc(userDocRef, { sessionExpiry: newExpiry });
-        userData.sessionExpiry = newExpiry;
-      }
-
-      this.currentUser = userData;
-      this.notifyListeners();
-      
-      return userData;
-
-    } catch (error: any) {
-      console.error("Login Error:", error);
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        throw new Error("Invalid credentials.");
-      }
-      throw new Error(error.message || "Login failed.");
+    if (!user) {
+      throw new Error("Invalid credentials.");
     }
+
+    if (user.password !== password) {
+      throw new Error("Invalid credentials.");
+    }
+
+    // Location Check
+    if (user.location) {
+      const distance = this.getDistanceFromLatLonInKm(
+        user.location.latitude,
+        user.location.longitude,
+        currentLocation.latitude,
+        currentLocation.longitude
+      );
+      
+      console.log(`[Location Verification] Dist: ${distance.toFixed(4)} km`);
+
+      if (distance > 20) {
+        throw new Error(`Security Alert: Location mismatch. You are ${distance.toFixed(1)}km away from your registered location.`);
+      }
+    }
+
+    // Update session
+    const newExpiry = Date.now() + SESSION_DURATION_MS;
+    user.sessionExpiry = newExpiry;
+    
+    // Update in DB
+    const userIndex = users.findIndex(u => u.id === user.id);
+    users[userIndex] = user;
+    this.saveUsers(users);
+
+    localStorage.setItem(SESSION_KEY, user.id);
+    
+    const { password: _, ...safeUser } = user;
+    this.currentUser = safeUser;
+    this.notifyListeners();
+    
+    return safeUser;
   }
 
   async logout() {
-    await signOut(auth);
+    localStorage.removeItem(SESSION_KEY);
     this.currentUser = null;
     this.notifyListeners();
   }
 
-  // --- State Access ---
-
   getCurrentUser(): User | null {
-    // Check expiry whenever UI requests user
     if (this.currentUser?.sessionExpiry && Date.now() > this.currentUser.sessionExpiry) {
         this.logout();
         return null;
@@ -251,120 +234,99 @@ class AuthService {
     return this.currentUser?.sessionExpiry || null;
   }
 
-  // --- CODE GENERATION SYSTEM ---
+  // --- Code Generation ---
 
   async generateRedemptionCode(targetEmail: string, courseIds: string[], adminName: string): Promise<string> {
-    try {
-      const cleanEmail = targetEmail.toLowerCase().trim();
-      // Generate a random code format: VISH-XXXX-XXXX
-      const randomPart = Math.random().toString(36).substring(2, 10).toUpperCase();
-      const code = `VISH-${randomPart.substring(0,4)}-${randomPart.substring(4,8)}`;
+    await delay(300);
+    const cleanEmail = targetEmail.toLowerCase().trim();
+    const randomPart = Math.random().toString(36).substring(2, 10).toUpperCase();
+    const code = `VISH-${randomPart.substring(0,4)}-${randomPart.substring(4,8)}`;
 
-      const newCode: RedemptionCode = {
-        code: code,
-        userEmail: cleanEmail,
-        courseIds: courseIds,
-        generatedBy: adminName,
-        createdAt: new Date().toISOString(),
-        isRedeemed: false
-      };
+    const newCode: RedemptionCode = {
+      id: 'code_' + Date.now(),
+      code: code,
+      userEmail: cleanEmail,
+      courseIds: courseIds,
+      generatedBy: adminName,
+      createdAt: new Date().toISOString(),
+      isRedeemed: false
+    };
 
-      // Add to 'redemptionCodes' collection
-      await addDoc(collection(db, "redemptionCodes"), newCode);
-      return code;
-    } catch (e) {
-      console.error("Failed to generate code:", e);
-      throw new Error("Code generation failed.");
-    }
+    const codes = this.getCodes();
+    codes.push(newCode);
+    this.saveCodes(codes);
+
+    return code;
   }
 
-  async redeemCode(code: string): Promise<string[]> {
+  async redeemCode(codeStr: string): Promise<string[]> {
+    await delay(500);
     if (!this.currentUser) throw new Error("Please login to redeem codes.");
 
-    try {
-      const cleanCode = code.trim().toUpperCase();
-      
-      // 1. Find the code in Firestore
-      const codesRef = collection(db, "redemptionCodes");
-      const q = query(codesRef, where("code", "==", cleanCode));
-      const querySnapshot = await getDocs(q);
+    const cleanCode = codeStr.trim().toUpperCase();
+    const codes = this.getCodes();
+    const codeIndex = codes.findIndex(c => c.code === cleanCode);
 
-      if (querySnapshot.empty) {
-        throw new Error("Invalid Code.");
-      }
-
-      const codeDoc = querySnapshot.docs[0];
-      const codeData = codeDoc.data() as RedemptionCode;
-
-      // 2. Security Checks
-      if (codeData.isRedeemed) {
-        throw new Error("This code has already been redeemed.");
-      }
-
-      if (codeData.userEmail !== this.currentUser.email) {
-        throw new Error("This code is not linked to your account.");
-      }
-
-      // 3. Redeem Process
-      // A. Mark code as redeemed
-      await updateDoc(doc(db, "redemptionCodes", codeDoc.id), {
-        isRedeemed: true,
-        redeemedAt: new Date().toISOString()
-      });
-
-      // B. Create an 'Order' record for history
-      const newOrder: Order = {
-        id: `RED_${codeDoc.id.substring(0,6)}`,
-        userId: this.currentUser.id,
-        amount: 0, // Redeemed codes have 0 monetary value in the record
-        date: new Date().toISOString(),
-        items: codeData.courseIds,
-        status: 'redeemed'
-      };
-      await setDoc(doc(db, "orders", newOrder.id), newOrder);
-
-      // C. Unlock courses for user
-      const userRef = doc(db, "users", this.currentUser.id);
-      await updateDoc(userRef, {
-        purchasedCourses: arrayUnion(...codeData.courseIds)
-      });
-
-      // D. Update local state
-      this.currentUser = {
-        ...this.currentUser,
-        purchasedCourses: [...new Set([...this.currentUser.purchasedCourses, ...codeData.courseIds])]
-      };
-      this.notifyListeners();
-
-      return codeData.courseIds;
-
-    } catch (e: any) {
-      console.error("Redemption failed:", e);
-      throw new Error(e.message || "Redemption failed.");
+    if (codeIndex === -1) {
+      throw new Error("Invalid Code.");
     }
+
+    const codeData = codes[codeIndex];
+
+    if (codeData.isRedeemed) {
+      throw new Error("This code has already been redeemed.");
+    }
+
+    if (codeData.userEmail !== this.currentUser.email) {
+      throw new Error("This code is not linked to your account.");
+    }
+
+    // Update Code
+    codeData.isRedeemed = true;
+    codes[codeIndex] = codeData;
+    this.saveCodes(codes);
+
+    // Create Order
+    const newOrder: Order = {
+      id: `RED_${Date.now()}`,
+      userId: this.currentUser.id,
+      amount: 0,
+      date: new Date().toISOString(),
+      items: codeData.courseIds,
+      status: 'redeemed'
+    };
+    const orders = this.getOrders();
+    orders.push(newOrder);
+    this.saveOrders(orders);
+
+    // Update User
+    const users = this.getUsers();
+    const userIndex = users.findIndex(u => u.id === this.currentUser!.id);
+    if (userIndex !== -1) {
+      const user = users[userIndex];
+      // Add unique courses
+      const updatedCourses = new Set([...user.purchasedCourses, ...codeData.courseIds]);
+      user.purchasedCourses = Array.from(updatedCourses);
+      users[userIndex] = user;
+      this.saveUsers(users);
+
+      // Update local state
+      const { password: _, ...safeUser } = user;
+      this.currentUser = safeUser;
+      this.notifyListeners();
+    }
+
+    return codeData.courseIds;
   }
 
   async getUserOrders(): Promise<Order[]> {
+    await delay(300);
     if (!this.currentUser) return [];
-
-    try {
-      const ordersRef = collection(db, "orders");
-      const q = query(
-        ordersRef, 
-        where("userId", "==", this.currentUser.id)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const orders: Order[] = [];
-      querySnapshot.forEach((doc) => {
-        orders.push(doc.data() as Order);
-      });
-      
-      return orders.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    } catch (e) {
-      console.error("Failed to fetch orders:", e);
-      return [];
-    }
+    
+    const orders = this.getOrders();
+    return orders
+      .filter(o => o.userId === this.currentUser!.id)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 }
 

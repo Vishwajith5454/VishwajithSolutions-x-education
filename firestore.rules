@@ -1,0 +1,39 @@
+// ===============================================================================
+// ⚠️ ACTION REQUIRED: HOW TO APPLY THESE RULES
+// ===============================================================================
+// 1. Go to Firebase Console (https://console.firebase.google.com)
+// 2. Navigate to: Build -> Firestore Database -> Rules (Tab)
+// 3. Delete the existing code in the editor.
+// 4. Copy and Paste ALL the code below into the editor.
+// 5. Click "Publish".
+// ===============================================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // User Profiles: Users can only read/write their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Courses: Publicly readable for the catalog
+    match /courses/{courseId} {
+      allow read: if true;
+    }
+    
+    // Orders: Users can read their own orders. Authenticated users can create orders.
+    match /orders/{orderId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null;
+    }
+    
+    // Redemption Codes: Authenticated users can read/redeem.
+    match /redemptionCodes/{codeId} {
+      allow read: if request.auth != null;
+      allow update: if request.auth != null; 
+      // In a strict production environment, 'create' should be restricted to admins only
+      allow create: if true; 
+    }
+  }
+}
