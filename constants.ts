@@ -5,6 +5,7 @@ import { Course } from "./types";
 const PRICE_INR_600_IN_USD = 7.15; 
 
 // STRICT PATH: Points exactly to the assets folder in the build output
+// NOTE: In Vite/Netlify production, 'public/assets' becomes just '/assets'
 export const PAYMENT_QR_PATH = "/assets/gpay_qr.png"; 
 
 export const MOCK_COURSES: Course[] = [
