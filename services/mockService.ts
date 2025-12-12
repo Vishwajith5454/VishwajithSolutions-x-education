@@ -1,49 +1,46 @@
+
 import { Course, Order, User, LocationCoords, RedemptionCode } from "../types";
 
-// Helper to simulate DB delay
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// ============================================================================
+// MOCK SERVICE (LocalStorage Implementation)
+// ============================================================================
+// Replaces Firebase dependency to resolve import errors and provide a
+// self-contained demo environment.
 
-const SESSION_KEY = 'vishwajith_session_uid';
-const USERS_KEY = 'vishwajith_users_db';
-const CODES_KEY = 'vishwajith_codes_db';
-const ORDERS_KEY = 'vishwajith_orders_db';
 const SESSION_DURATION_MS = 2 * 60 * 60 * 1000; // 2 Hours
 
 type AuthStateListener = (user: User | null) => void;
-
-// Extended user type for internal storage (includes password)
-interface DBUser extends User {
-  password?: string;
-}
 
 class AuthService {
   private currentUser: User | null = null;
   private listeners: AuthStateListener[] = [];
 
   constructor() {
-    this.init();
+    this.restoreSession();
   }
 
-  private init() {
-    const uid = localStorage.getItem(SESSION_KEY);
-    if (uid) {
-      const user = this.getUserById(uid);
-      if (user) {
+  private restoreSession() {
+    try {
+      const storedUser = localStorage.getItem('mock_currentUser');
+      if (storedUser) {
+        const parsed = JSON.parse(storedUser);
         // Check expiry
-        if (user.sessionExpiry && Date.now() > user.sessionExpiry) {
+        if (parsed.sessionExpiry && Date.now() > parsed.sessionExpiry) {
           this.logout();
         } else {
-          this.currentUser = user;
+          this.currentUser = parsed;
         }
       }
+    } catch (e) {
+      console.error("Failed to restore session", e);
+      this.logout();
     }
-    // Notify after initialization
-    setTimeout(() => this.notifyListeners(), 0);
   }
 
+  // --- Subscription System ---
   subscribe(listener: AuthStateListener) {
     this.listeners.push(listener);
-    // Notify immediately with current state
+    // Immediately notify with current state so UI initializes
     listener(this.currentUser);
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
@@ -51,59 +48,24 @@ class AuthService {
   }
 
   private notifyListeners() {
+    if (this.currentUser) {
+      localStorage.setItem('mock_currentUser', JSON.stringify(this.currentUser));
+    } else {
+      localStorage.removeItem('mock_currentUser');
+    }
     this.listeners.forEach(listener => listener(this.currentUser));
   }
 
-  // --- LocalStorage Helpers ---
-
-  private getUsers(): DBUser[] {
-    try {
-      const str = localStorage.getItem(USERS_KEY);
-      return str ? JSON.parse(str) : [];
-    } catch (e) {
-      return [];
-    }
+  // --- Helper: DB Simulation ---
+  // We simulate a database using LocalStorage keys
+  private getDB<T>(collection: string): T[] {
+    const data = localStorage.getItem(`mock_db_${collection}`);
+    return data ? JSON.parse(data) : [];
   }
 
-  private saveUsers(users: DBUser[]) {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  private saveDB<T>(collection: string, data: T[]) {
+    localStorage.setItem(`mock_db_${collection}`, JSON.stringify(data));
   }
-
-  private getUserById(uid: string): User | null {
-    const users = this.getUsers();
-    const user = users.find(u => u.id === uid);
-    if (!user) return null;
-    const { password, ...safeUser } = user;
-    return safeUser;
-  }
-
-  private getCodes(): RedemptionCode[] {
-    try {
-      const str = localStorage.getItem(CODES_KEY);
-      return str ? JSON.parse(str) : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  private saveCodes(codes: RedemptionCode[]) {
-    localStorage.setItem(CODES_KEY, JSON.stringify(codes));
-  }
-
-  private getOrders(): Order[] {
-    try {
-      const str = localStorage.getItem(ORDERS_KEY);
-      return str ? JSON.parse(str) : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  private saveOrders(orders: Order[]) {
-    localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
-  }
-
-  // --- Logic ---
 
   private getDistanceFromLatLonInKm(lat1: number, lon1: number, lat2: number, lon2: number) {
     if (typeof lat1 !== 'number' || typeof lon1 !== 'number' || typeof lat2 !== 'number' || typeof lon2 !== 'number') {
@@ -124,7 +86,7 @@ class AuthService {
     return deg * (Math.PI / 180);
   }
 
-  // --- Public Methods ---
+  // --- Public Auth Methods ---
 
   async registerCandidate(
     email: string, 
@@ -132,95 +94,96 @@ class AuthService {
     password: string, 
     location: LocationCoords
   ): Promise<User> {
-    await delay(500); // Simulate network
+    await new Promise(resolve => setTimeout(resolve, 800)); // Simulate network delay
     
+    const users = this.getDB<any>('users'); // storing user with password in mock db
     const normalizedEmail = email.toLowerCase().trim();
-    const users = this.getUsers();
 
-    if (users.some(u => u.email === normalizedEmail)) {
-      throw new Error("User already registered. Please login directly.");
+    if (users.find(u => u.email === normalizedEmail)) {
+       throw new Error("User already registered. Please login directly.");
     }
 
     const uid = 'user_' + Math.random().toString(36).substr(2, 9);
     const initialExpiry = Date.now() + SESSION_DURATION_MS;
 
-    const newUser: DBUser = {
-      id: uid,
-      email: normalizedEmail,
-      name,
-      password, // Store password
-      purchasedCourses: [],
-      location,
-      sessionExpiry: initialExpiry
+    const newUserProfile: User = {
+        id: uid,
+        email: normalizedEmail,
+        name: name,
+        purchasedCourses: [],
+        location: location,
+        sessionExpiry: initialExpiry
     };
 
-    users.push(newUser);
-    this.saveUsers(users);
-    
-    // Set session
-    localStorage.setItem(SESSION_KEY, uid);
-    
-    const { password: _, ...safeUser } = newUser;
-    this.currentUser = safeUser;
-    this.notifyListeners();
+    // Store with password (unsafe for real app, okay for mock)
+    users.push({ ...newUserProfile, password }); 
+    this.saveDB('users', users);
 
-    return safeUser;
+    this.currentUser = newUserProfile;
+    this.notifyListeners();
+    
+    return newUserProfile;
   }
 
   async loginCandidate(email: string, password: string, currentLocation: LocationCoords): Promise<User> {
-    await delay(500);
+    await new Promise(resolve => setTimeout(resolve, 800)); // Simulate network delay
     
+    const users = this.getDB<any>('users');
     const normalizedEmail = email.toLowerCase().trim();
-    const users = this.getUsers();
-    const user = users.find(u => u.email === normalizedEmail);
+    
+    const userRecord = users.find(u => u.email === normalizedEmail);
 
-    if (!user) {
-      throw new Error("Invalid credentials.");
+    if (!userRecord) {
+        throw new Error("User not found.");
     }
 
-    if (user.password !== password) {
-      throw new Error("Invalid credentials.");
+    if (userRecord.password !== password) {
+        throw new Error("Invalid credentials.");
     }
 
     // Location Check
-    if (user.location) {
-      const distance = this.getDistanceFromLatLonInKm(
-        user.location.latitude,
-        user.location.longitude,
-        currentLocation.latitude,
-        currentLocation.longitude
-      );
-      
-      console.log(`[Location Verification] Dist: ${distance.toFixed(4)} km`);
+    if (userRecord.location) {
+        const distance = this.getDistanceFromLatLonInKm(
+          userRecord.location.latitude,
+          userRecord.location.longitude,
+          currentLocation.latitude,
+          currentLocation.longitude
+        );
 
-      if (distance > 20) {
-        throw new Error(`Security Alert: Location mismatch. You are ${distance.toFixed(1)}km away from your registered location.`);
-      }
+        console.log(`[Location Verification] Dist: ${distance.toFixed(4)} km`);
+
+        if (distance > 20) {
+          throw new Error(`Security Alert: Location mismatch. You are ${distance.toFixed(1)}km away from your registered location.`);
+        }
     }
 
     // Update session
-    const newExpiry = Date.now() + SESSION_DURATION_MS;
-    user.sessionExpiry = newExpiry;
+    const now = Date.now();
+    let newExpiry = userRecord.sessionExpiry;
+    if (!newExpiry || now > newExpiry) {
+        newExpiry = now + SESSION_DURATION_MS;
+    }
     
-    // Update in DB
-    const userIndex = users.findIndex(u => u.id === user.id);
-    users[userIndex] = user;
-    this.saveUsers(users);
+    // Update user in DB
+    userRecord.sessionExpiry = newExpiry;
+    // Map carefully to avoid mutation issues if ref is same
+    const updatedUsers = users.map(u => u.id === userRecord.id ? { ...userRecord } : u);
+    this.saveDB('users', updatedUsers);
 
-    localStorage.setItem(SESSION_KEY, user.id);
-    
-    const { password: _, ...safeUser } = user;
-    this.currentUser = safeUser;
+    // Return sanitized user (without password)
+    const { password: _, ...safeUser } = userRecord;
+    this.currentUser = safeUser as User;
     this.notifyListeners();
     
-    return safeUser;
+    return this.currentUser;
   }
 
   async logout() {
-    localStorage.removeItem(SESSION_KEY);
     this.currentUser = null;
     this.notifyListeners();
   }
+
+  // --- State Access ---
 
   getCurrentUser(): User | null {
     if (this.currentUser?.sessionExpiry && Date.now() > this.currentUser.sessionExpiry) {
@@ -234,99 +197,98 @@ class AuthService {
     return this.currentUser?.sessionExpiry || null;
   }
 
-  // --- Code Generation ---
+  // --- CODE GENERATION SYSTEM (LocalStorage Backed) ---
 
   async generateRedemptionCode(targetEmail: string, courseIds: string[], adminName: string): Promise<string> {
-    await delay(300);
+    await new Promise(resolve => setTimeout(resolve, 500));
     const cleanEmail = targetEmail.toLowerCase().trim();
     const randomPart = Math.random().toString(36).substring(2, 10).toUpperCase();
     const code = `VISH-${randomPart.substring(0,4)}-${randomPart.substring(4,8)}`;
 
     const newCode: RedemptionCode = {
-      id: 'code_' + Date.now(),
-      code: code,
-      userEmail: cleanEmail,
-      courseIds: courseIds,
-      generatedBy: adminName,
-      createdAt: new Date().toISOString(),
-      isRedeemed: false
+        code: code,
+        userEmail: cleanEmail,
+        courseIds: courseIds,
+        generatedBy: adminName,
+        createdAt: new Date().toISOString(),
+        isRedeemed: false
     };
 
-    const codes = this.getCodes();
+    const codes = this.getDB<RedemptionCode>('codes');
     codes.push(newCode);
-    this.saveCodes(codes);
+    this.saveDB('codes', codes);
 
     return code;
   }
 
-  async redeemCode(codeStr: string): Promise<string[]> {
-    await delay(500);
+  async redeemCode(code: string): Promise<string[]> {
+    await new Promise(resolve => setTimeout(resolve, 500));
     if (!this.currentUser) throw new Error("Please login to redeem codes.");
 
-    const cleanCode = codeStr.trim().toUpperCase();
-    const codes = this.getCodes();
+    const cleanCode = code.trim().toUpperCase();
+    const codes = this.getDB<RedemptionCode>('codes');
     const codeIndex = codes.findIndex(c => c.code === cleanCode);
 
     if (codeIndex === -1) {
-      throw new Error("Invalid Code.");
+        throw new Error("Invalid Code.");
     }
 
     const codeData = codes[codeIndex];
 
     if (codeData.isRedeemed) {
-      throw new Error("This code has already been redeemed.");
+        throw new Error("This code has already been redeemed.");
     }
 
     if (codeData.userEmail !== this.currentUser.email) {
-      throw new Error("This code is not linked to your account.");
+        throw new Error("This code is not linked to your account.");
     }
 
-    // Update Code
-    codeData.isRedeemed = true;
-    codes[codeIndex] = codeData;
-    this.saveCodes(codes);
+    // 1. Mark code as redeemed
+    codes[codeIndex] = { ...codeData, isRedeemed: true };
+    this.saveDB('codes', codes);
 
-    // Create Order
+    // 2. Create Order
     const newOrder: Order = {
-      id: `RED_${Date.now()}`,
-      userId: this.currentUser.id,
-      amount: 0,
-      date: new Date().toISOString(),
-      items: codeData.courseIds,
-      status: 'redeemed'
+        id: `RED_${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
+        userId: this.currentUser.id,
+        amount: 0,
+        date: new Date().toISOString(),
+        items: codeData.courseIds,
+        status: 'redeemed'
     };
-    const orders = this.getOrders();
+    const orders = this.getDB<Order>('orders');
     orders.push(newOrder);
-    this.saveOrders(orders);
+    this.saveDB('orders', orders);
 
-    // Update User
-    const users = this.getUsers();
+    // 3. Update User
+    const users = this.getDB<any>('users');
     const userIndex = users.findIndex(u => u.id === this.currentUser!.id);
     if (userIndex !== -1) {
-      const user = users[userIndex];
-      // Add unique courses
-      const updatedCourses = new Set([...user.purchasedCourses, ...codeData.courseIds]);
-      user.purchasedCourses = Array.from(updatedCourses);
-      users[userIndex] = user;
-      this.saveUsers(users);
+        const currentCourses = users[userIndex].purchasedCourses || [];
+        // Add new courses without duplicates
+        const newCourses = [...new Set([...currentCourses, ...codeData.courseIds])];
+        users[userIndex].purchasedCourses = newCourses;
+        this.saveDB('users', users);
 
-      // Update local state
-      const { password: _, ...safeUser } = user;
-      this.currentUser = safeUser;
-      this.notifyListeners();
+        // Update local state
+        this.currentUser = {
+            ...this.currentUser,
+            purchasedCourses: newCourses
+        };
+        this.notifyListeners();
     }
 
     return codeData.courseIds;
   }
 
   async getUserOrders(): Promise<Order[]> {
-    await delay(300);
+    await new Promise(resolve => setTimeout(resolve, 300));
     if (!this.currentUser) return [];
-    
-    const orders = this.getOrders();
+
+    const orders = this.getDB<Order>('orders');
     return orders
-      .filter(o => o.userId === this.currentUser!.id)
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        .filter(o => o.userId === this.currentUser!.id)
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 }
 
