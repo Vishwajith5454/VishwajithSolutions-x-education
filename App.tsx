@@ -77,18 +77,28 @@ const App: React.FC = () => {
         
         // Calculate distance using Service Helper
         const distance = mockService.getDistanceFromLatLonInKm(regLat, regLng, currentLat, currentLng);
+        
+        // Debug Log (Remove in production if needed, but useful for verification)
+        console.debug(`[Background Check] Dist: ${distance.toFixed(3)}km`);
 
         if (distance > 20) { // Strict 20km limit
              console.error(`SECURITY VIOLATION: User moved ${distance.toFixed(2)}km from registered location.`);
-             alert("SECURITY ALERT: You have moved beyond the allowed radius of your registered location. Session terminated.");
+             alert("SECURITY ALERT: You have moved beyond the 20km radius of your registered location. Session terminated.");
              mockService.logout();
         }
       },
-      (err) => console.warn("Background location monitor warning:", err),
+      (err) => {
+        // Only warn on console, don't logout immediately on error to avoid false positives 
+        // from temporary signal loss (tunnels, elevators).
+        // Real-world robust: Only fail if we can't get location for a long time (handled by auth check manually if needed)
+        console.warn("Background location monitor warning:", err.message);
+      },
       { 
         enableHighAccuracy: true, 
-        timeout: 10000, 
-        maximumAge: 5000 
+        // Increased timeout to prevent "timeout" errors from firing constantly
+        timeout: 20000, 
+        // Allow using a cached position up to 30 seconds old to save battery/reduce errors
+        maximumAge: 30000 
       }
     );
 

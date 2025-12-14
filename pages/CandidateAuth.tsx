@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
 import { Button, Input, Toast } from '../components/UI';
-import { MapPin, AlertTriangle, ShieldCheck, CheckSquare, Square, RefreshCw } from 'lucide-react';
+import { MapPin, AlertTriangle, ShieldCheck, CheckSquare, Square, RefreshCw, Satellite, Wifi } from 'lucide-react';
 import { mockService } from '../services/mockService';
 import { LocationCoords } from '../types';
 
@@ -42,61 +42,50 @@ export const CandidateAuth: React.FC = () => {
     }
   }, [isRegisterMode]);
 
-  // --- ROBUST LOCATION STRATEGY ---
+  // --- ROBUST LOCATION STRATEGY (TIERED) ---
   const getLocation = async (): Promise<LocationCoords> => {
     if (!navigator.geolocation) {
       throw new Error("Geolocation is not supported by your browser.");
     }
 
-    // Wrapper to make navigator.geolocation async/await compatible
     const getPosition = (options: PositionOptions): Promise<GeolocationPosition> => {
       return new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, options);
       });
     };
 
+    // TIER 1: High Accuracy (GPS)
+    // Relaxed constraints: 10s timeout, accept 2 min old cache
     try {
       console.log("Attempting Tier 1 Location (High Accuracy)...");
-      // ATTEMPT 1: High Accuracy (GPS)
-      // Fast timeout (5s) because if GPS is available, it connects fast.
-      // If it hangs, we want to fail fast and switch to fallback.
       const position = await getPosition({ 
         enableHighAccuracy: true, 
-        timeout: 5000, 
-        maximumAge: 10000 // Accept positions up to 10s old
+        timeout: 10000, 
+        maximumAge: 120000 
       });
-      
-      return {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude
-      };
-
+      return { latitude: position.coords.latitude, longitude: position.coords.longitude };
     } catch (err: any) {
-      // If Permission Denied, stop immediately.
-      if (err.code === 1) throw new Error("Location permission denied. Please allow access in browser settings.");
+      console.warn("Tier 1 failed:", err.message);
+      if (err.code === 1) throw new Error("Location permission denied. Please enable in browser settings.");
+    }
 
-      console.warn("Tier 1 Location failed/timed out. Switching to Tier 2 (Network)...", err.message);
-      
-      // ATTEMPT 2: Network Location (WiFi/Cell)
-      // Much more reliable indoors.
-      try {
-        const fallbackPosition = await getPosition({ 
-          enableHighAccuracy: false, // Use network triangulation
-          timeout: 15000,            // Give it 15 seconds
-          maximumAge: 60000          // Accept positions up to 1 min old
-        });
-
-        return {
-          latitude: fallbackPosition.coords.latitude,
-          longitude: fallbackPosition.coords.longitude
-        };
-      } catch (fallbackErr: any) {
-        let msg = "Location check failed.";
-        if (fallbackErr.code === 1) msg = "Location permission denied.";
-        else if (fallbackErr.code === 2) msg = "Location signal unavailable. Check GPS/Network.";
-        else if (fallbackErr.code === 3) msg = "Location request timed out. Please check connection.";
-        throw new Error(msg);
-      }
+    // TIER 2: Network Location (WiFi/Cell)
+    // Very relaxed: 20s timeout, accept ANY cached position
+    try {
+      console.log("Attempting Tier 2 Location (Network/Fallback)...");
+      const fallbackPosition = await getPosition({ 
+        enableHighAccuracy: false, 
+        timeout: 20000,            
+        maximumAge: Infinity       
+      });
+      return { latitude: fallbackPosition.coords.latitude, longitude: fallbackPosition.coords.longitude };
+    } catch (fallbackErr: any) {
+      console.error("Tier 2 failed:", fallbackErr);
+      let msg = "Could not verify location.";
+      if (fallbackErr.code === 1) msg = "Location permission denied.";
+      else if (fallbackErr.code === 2) msg = "GPS/Network signal unavailable.";
+      else if (fallbackErr.code === 3) msg = "Location request timed out. Please move to an open area.";
+      throw new Error(msg);
     }
   };
 
@@ -153,6 +142,8 @@ export const CandidateAuth: React.FC = () => {
       // User friendly error mapping
       if (msg.includes("auth/invalid-email")) msg = "Invalid email address format.";
       if (msg.includes("auth/weak-password")) msg = "Password should be at least 6 characters.";
+      if (msg.includes("auth/wrong-password")) msg = "Invalid credentials.";
+      if (msg.includes("auth/user-not-found")) msg = "User not found. Please register.";
 
       setError(msg);
       setToast({ msg: msg, type: 'error' });
@@ -277,12 +268,12 @@ export const CandidateAuth: React.FC = () => {
               {status === 'acquiring_location' ? (
                 <>
                    <RefreshCw size={12} className="text-fuchsia-400 animate-spin" />
-                   <span className="text-fuchsia-400">Syncing with satellites...</span>
+                   <span className="text-fuchsia-400">Synchronizing Global Position...</span>
                 </>
               ) : (
                 <>
                    <MapPin size={12} className="text-cyan-500" />
-                   <span>Secure geo-tagging active.</span>
+                   <span>Secure geo-tagging active (Radius: 20KM).</span>
                 </>
               )}
             </div>
