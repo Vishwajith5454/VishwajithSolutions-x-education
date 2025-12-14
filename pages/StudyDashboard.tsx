@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Monitor, Globe, PenTool, Book, Cpu, X, PlayCircle } from 'lucide-react';
+import { Monitor, Globe, PenTool, Book, Cpu, X, PlayCircle, ExternalLink, Minimize2 } from 'lucide-react';
 
 const subjects = [
   { 
@@ -39,6 +39,20 @@ const subjects = [
     color: 'yellow',
     url: "https://rolexcoderz.in/Subjects/?subject_id=21779&course_id=39904"
   },
+  { 
+    id: 'sanskrit', 
+    name: 'Sanskrit', 
+    icon: <Book size={32} />, 
+    color: 'orange',
+    url: "https://rolexcoderz.in/Subjects/?subject_id=14966&course_id=39904"
+  },
+  { 
+    id: 'hindi', 
+    name: 'Hindi', 
+    icon: <Book size={32} />, 
+    color: 'red',
+    url: "https://rolexcoderz.in/Subjects/?subject_id=14963&course_id=39904"
+  },
 ];
 
 export const StudyDashboard: React.FC = () => {
@@ -48,37 +62,46 @@ export const StudyDashboard: React.FC = () => {
   // If a URL is active, show the full-screen iframe overlay
   if (activeUrl) {
     return (
-      <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col animate-in fade-in duration-300">
-        {/* Header Bar for Close Button */}
-        <div className="bg-slate-950 border-b border-white/10 p-3 flex justify-between items-center shadow-lg relative z-50">
-           <div className="flex items-center gap-2 px-2">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-              <span className="text-slate-300 font-mono text-sm uppercase">Live External Resource</span>
-           </div>
-           
-           <button 
-             onClick={() => setActiveUrl(null)}
-             className="bg-red-600 hover:bg-red-500 text-white p-2 rounded-full transition-all hover:rotate-90 shadow-[0_0_15px_rgba(220,38,38,0.5)]"
-             title="Close and Return to Dashboard"
-           >
-             <X size={24} />
-           </button>
-        </div>
-
-        {/* The Iframe Content */}
-        <div className="flex-1 w-full h-full bg-white relative">
+      <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-in fade-in duration-300 w-full h-[100dvh]">
+        
+        {/* The Iframe Content - Takes up 100% space */}
+        <div className="absolute inset-0 w-full h-full bg-white">
            <iframe 
              src={activeUrl}
-             className="absolute inset-0 w-full h-full border-0"
+             className="w-full h-full border-0"
              title="Course Content"
              allowFullScreen
              // CRITICAL SECURITY: 
-             // 1. allow-top-navigation is REMOVED to prevent redirects
-             // 2. referrerPolicy="no-referrer" prevents origin leakage
+             // 1. referrerPolicy="no-referrer" prevents origin leakage
              sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
              referrerPolicy="no-referrer"
            />
         </div>
+
+        {/* Floating Bottom Control Bar - Minimal & Fixed */}
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center justify-center pointer-events-none">
+          <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] rounded-full px-2 py-2 flex items-center gap-4 pointer-events-auto transition-all hover:scale-105 hover:bg-slate-900">
+             
+             {/* Status Indicator */}
+             <div className="flex items-center gap-2 pl-3">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                <span className="text-white font-mono text-xs font-bold uppercase tracking-wider hidden sm:inline">Live Session</span>
+             </div>
+
+             <div className="h-4 w-px bg-white/20"></div>
+
+             {/* Close Button */}
+             <button 
+               onClick={() => setActiveUrl(null)}
+               className="bg-red-600 hover:bg-red-500 text-white rounded-full p-2 transition-colors flex items-center gap-2"
+               title="Close Resource"
+             >
+               <Minimize2 size={16} />
+               <span className="text-xs font-bold pr-1">EXIT</span>
+             </button>
+          </div>
+        </div>
+
       </div>
     );
   }

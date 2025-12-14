@@ -1,3 +1,4 @@
+
 // ===============================================================================
 // ⚠️ ACTION REQUIRED: HOW TO APPLY THESE RULES
 // ===============================================================================
@@ -12,9 +13,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // User Profiles: Users can only read/write their own data
+    // User Profiles:
+    // read: Allow public read to enable "Admin" identity verification (lookup by email)
+    // create: Allow authenticated users to create their own profile during registration
+    // update/delete: Strictly owner only (authenticated user matching the document ID)
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if true;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update, delete: if request.auth != null && request.auth.uid == userId;
     }
     
     // Courses: Publicly readable for the catalog
@@ -28,12 +34,14 @@ service cloud.firestore {
       allow create: if request.auth != null;
     }
     
-    // Redemption Codes: Authenticated users can read/redeem.
+    // Redemption Codes: 
+    // read: Authenticated users (to redeem)
+    // create: Public (so unauthenticated "Admin" can generate codes via the portal)
+    // update: Authenticated users (marking as redeemed)
     match /redemptionCodes/{codeId} {
       allow read: if request.auth != null;
       allow update: if request.auth != null; 
-      // In a strict production environment, 'create' should be restricted to admins only
-      allow create: if true; 
+      allow create: if true;
     }
   }
 }

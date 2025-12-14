@@ -1,11 +1,13 @@
 
-import React, { useState } from 'react';
-import { Button, Input, Toast, Modal } from '../components/UI';
-import { ShieldCheck, Cpu, User, Mail, BookOpen, Key } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Button, Input, Toast } from '../components/UI';
+import { ShieldCheck, Cpu, User, Mail, BookOpen, Key, CheckCircle, Search } from 'lucide-react';
 import { MOCK_COURSES } from '../constants';
 import { mockService } from '../services/mockService';
+import { useLocation } from 'react-router-dom';
 
 export const CodeGenerator: React.FC = () => {
+  const location = useLocation();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
@@ -14,8 +16,21 @@ export const CodeGenerator: React.FC = () => {
   const [targetEmail, setTargetEmail] = useState('');
   const [targetUsername, setTargetUsername] = useState('');
   const [selectedCourse, setSelectedCourse] = useState(MOCK_COURSES[0].id);
+  
+  // Verification State
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isUserVerified, setIsUserVerified] = useState(false);
+
+  // Generation State
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // Check for auth state passed from Landing page
+  useEffect(() => {
+    if (location.state?.authenticated) {
+      setIsAuthenticated(true);
+    }
+  }, [location.state]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,27 +42,58 @@ export const CodeGenerator: React.FC = () => {
     }
   };
 
-  const handleGenerate = async () => {
+  const handleVerifyUser = async () => {
     if (!targetEmail || !targetUsername) {
-      setToast({ msg: 'Please enter user details', type: 'error' });
+      setToast({ msg: 'Please enter both Email and Username', type: 'error' });
+      return;
+    }
+    
+    setIsVerifying(true);
+    setIsUserVerified(false);
+
+    try {
+      const exists = await mockService.verifyUserIdentity(targetEmail.trim().toLowerCase(), targetUsername.trim());
+      if (exists) {
+        setIsUserVerified(true);
+        setToast({ msg: 'User Verified Successfully', type: 'success' });
+      } else {
+        setToast({ msg: 'User not found or details mismatch', type: 'error' });
+      }
+    } catch (error) {
+      setToast({ msg: 'Verification Error', type: 'error' });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!isUserVerified) {
+      setToast({ msg: 'Please verify user first', type: 'error' });
       return;
     }
 
     setIsGenerating(true);
     setGeneratedCode(null);
 
-    // Simulate "AI Processing" time
+    // Simulate "AI Processing" time + Real DB Call
     setTimeout(async () => {
       try {
         const code = await mockService.generateRedemptionCode(targetEmail, [selectedCourse], "Admin");
         setGeneratedCode(code);
-        setToast({ msg: 'Code Generated Successfully', type: 'success' });
+        setToast({ msg: 'Code Generated & Linked to User', type: 'success' });
       } catch (err) {
         setToast({ msg: 'Generation failed', type: 'error' });
       } finally {
         setIsGenerating(false);
       }
-    }, 2000);
+    }, 1500);
+  };
+
+  // Reset verification if inputs change
+  const handleInputChange = (setter: React.Dispatch<React.SetStateAction<string>>, value: string) => {
+    setter(value);
+    setIsUserVerified(false);
+    setGeneratedCode(null);
   };
 
   if (!isAuthenticated) {
@@ -94,7 +140,7 @@ export const CodeGenerator: React.FC = () => {
             <div className="p-8 space-y-8">
                
                {/* User Details Section */}
-               <div className="grid md:grid-cols-2 gap-6">
+               <div className="grid md:grid-cols-2 gap-6 relative">
                  <div>
                     <label className="flex items-center gap-2 text-xs font-display text-fuchsia-400 mb-2 uppercase tracking-widest">
                       <User size={14} /> User Identity
@@ -102,7 +148,7 @@ export const CodeGenerator: React.FC = () => {
                     <Input 
                       placeholder="Target Username" 
                       value={targetUsername}
-                      onChange={(e) => setTargetUsername(e.target.value)}
+                      onChange={(e) => handleInputChange(setTargetUsername, e.target.value)}
                       className="bg-slate-950/80"
                     />
                  </div>
@@ -113,68 +159,97 @@ export const CodeGenerator: React.FC = () => {
                     <Input 
                       placeholder="user@example.com" 
                       value={targetEmail}
-                      onChange={(e) => setTargetEmail(e.target.value)}
+                      onChange={(e) => handleInputChange(setTargetEmail, e.target.value)}
                       className="bg-slate-950/80"
                     />
                  </div>
-               </div>
-
-               {/* Course Selector */}
-               <div>
-                  <label className="flex items-center gap-2 text-xs font-display text-cyan-400 mb-2 uppercase tracking-widest">
-                      <BookOpen size={14} /> Select Asset
-                  </label>
-                  <select 
-                    className="w-full bg-slate-950/80 border border-slate-700 rounded px-4 py-3 text-white focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:outline-none transition-colors appearance-none"
-                    value={selectedCourse}
-                    onChange={(e) => setSelectedCourse(e.target.value)}
-                  >
-                    {MOCK_COURSES.map(course => (
-                      <option key={course.id} value={course.id}>
-                        {course.title} ({course.category})
-                      </option>
-                    ))}
-                  </select>
-               </div>
-
-               {/* Action Area */}
-               <div className="pt-4">
-                 {!generatedCode ? (
-                   <Button 
-                     onClick={handleGenerate} 
-                     isLoading={isGenerating}
-                     className="w-full h-16 text-lg bg-gradient-to-r from-cyan-600 to-fuchsia-600 hover:from-cyan-500 hover:to-fuchsia-500 shadow-[0_0_30px_rgba(6,182,212,0.3)]"
-                   >
-                     {isGenerating ? 'PROCESSING ALGORITHM...' : 'GENERATE SECURE CODE'}
-                   </Button>
-                 ) : (
-                   <div className="animate-in zoom-in duration-300">
-                      <div className="bg-slate-950 border border-emerald-500/50 rounded-xl p-6 text-center relative overflow-hidden">
-                        <div className="text-xs text-emerald-500 uppercase tracking-widest mb-2">Code Generated Successfully</div>
-                        <div className="font-mono text-3xl md:text-4xl font-bold text-white tracking-[0.2em] mb-4 select-all">
-                          {generatedCode}
-                        </div>
-                        <Button 
-                          onClick={() => {
-                            navigator.clipboard.writeText(generatedCode);
-                            setToast({ msg: 'Code Copied!', type: 'success' });
-                          }}
-                          variant="outline"
-                          className="mx-auto border-emerald-500/50 text-emerald-400 hover:bg-emerald-950/30"
-                        >
-                          Copy to Clipboard
-                        </Button>
-
-                        {/* Reset */}
-                        <button 
-                          onClick={() => setGeneratedCode(null)} 
-                          className="absolute top-2 right-2 text-slate-600 hover:text-white"
-                        >
-                          <Key size={16} />
-                        </button>
-                      </div>
-                   </div>
+                 
+                 {/* Verification Status Overlay */}
+                 {isUserVerified && (
+                    <div className="absolute -top-3 -right-3">
+                       <CheckCircle className="text-emerald-500 bg-black rounded-full" size={24} />
+                    </div>
                  )}
+               </div>
+
+               {/* Verification Button */}
+               {!isUserVerified && (
+                  <Button 
+                    onClick={handleVerifyUser} 
+                    isLoading={isVerifying}
+                    variant="outline"
+                    className="w-full border-fuchsia-500/50 text-fuchsia-400 hover:bg-fuchsia-950/30"
+                  >
+                    <Search size={16} className="mr-2" /> VERIFY DATABASE ENTRY
+                  </Button>
+               )}
+
+               {/* Course Selector & Generation (Only shown if verified) */}
+               <div className={`transition-all duration-500 ${isUserVerified ? 'opacity-100 translate-y-0' : 'opacity-50 translate-y-4 pointer-events-none grayscale'}`}>
+                   <div className="mb-8">
+                      <label className="flex items-center gap-2 text-xs font-display text-cyan-400 mb-2 uppercase tracking-widest">
+                          <BookOpen size={14} /> Select Asset to Unlock
+                      </label>
+                      <select 
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded px-4 py-3 text-white focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:outline-none transition-colors appearance-none"
+                        value={selectedCourse}
+                        onChange={(e) => setSelectedCourse(e.target.value)}
+                        disabled={!isUserVerified}
+                      >
+                        {MOCK_COURSES.map(course => (
+                          <option key={course.id} value={course.id}>
+                            {course.title} ({course.category})
+                          </option>
+                        ))}
+                      </select>
+                   </div>
+
+                   {/* Action Area */}
+                   <div>
+                     {!generatedCode ? (
+                       <Button 
+                         onClick={handleGenerate} 
+                         isLoading={isGenerating}
+                         disabled={!isUserVerified}
+                         className="w-full h-16 text-lg bg-gradient-to-r from-cyan-600 to-fuchsia-600 hover:from-cyan-500 hover:to-fuchsia-500 shadow-[0_0_30px_rgba(6,182,212,0.3)]"
+                       >
+                         {isGenerating ? 'WRITING TO DATABASE...' : 'GENERATE SECURE CODE'}
+                       </Button>
+                     ) : (
+                       <div className="animate-in zoom-in duration-300">
+                          <div className="bg-slate-950 border border-emerald-500/50 rounded-xl p-6 text-center relative overflow-hidden">
+                            <div className="text-xs text-emerald-500 uppercase tracking-widest mb-2">Code Active in Database</div>
+                            <div className="font-mono text-3xl md:text-4xl font-bold text-white tracking-[0.2em] mb-4 select-all">
+                              {generatedCode}
+                            </div>
+                            <Button 
+                              onClick={() => {
+                                navigator.clipboard.writeText(generatedCode);
+                                setToast({ msg: 'Code Copied!', type: 'success' });
+                              }}
+                              variant="outline"
+                              className="mx-auto border-emerald-500/50 text-emerald-400 hover:bg-emerald-950/30"
+                            >
+                              Copy to Clipboard
+                            </Button>
+
+                            {/* Reset */}
+                            <button 
+                              onClick={() => {
+                                setGeneratedCode(null);
+                                setIsUserVerified(false); // Force re-verification for next code to be safe
+                                setTargetEmail('');
+                                setTargetUsername('');
+                              }} 
+                              className="absolute top-2 right-2 text-slate-600 hover:text-white"
+                              title="Reset Generator"
+                            >
+                              <Key size={16} />
+                            </button>
+                          </div>
+                       </div>
+                     )}
+                   </div>
                </div>
 
             </div>

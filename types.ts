@@ -25,6 +25,7 @@ export interface User {
   email: string;
   name: string;
   purchasedCourses: string[]; // Array of Course IDs
+  cart: string[]; // Added cart persistence
   location?: LocationCoords;
   sessionExpiry?: number; // Timestamp stored in DB
 }

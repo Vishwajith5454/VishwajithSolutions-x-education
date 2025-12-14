@@ -25,19 +25,24 @@ export const useAuth = () => {
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [sessionExpiry, setSessionExpiry] = useState<number | null>(null);
+  // Cart state now derived from User object where possible
   const [cart, setCart] = useState<string[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
 
   // Initialize & Subscribe to Auth State
   useEffect(() => {
-    // Load initial cart
-    const storedCart = localStorage.getItem('cart');
-    if (storedCart) setCart(JSON.parse(storedCart));
-
     // Subscribe to mockService updates (Firebase Auth + Firestore)
     const unsubscribe = mockService.subscribe((updatedUser) => {
       setUser(updatedUser);
       setSessionExpiry(mockService.getSessionExpiry());
+      
+      // Sync cart from user profile if available
+      if (updatedUser) {
+        setCart(updatedUser.cart || []);
+      } else {
+        setCart([]);
+      }
+      
       setIsInitialized(true);
     });
 
@@ -57,9 +62,42 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [user]);
 
+  // --- BACKGROUND LOCATION WATCHER (TIER 1 SECURITY) ---
   useEffect(() => {
-    localStorage.setItem('cart', JSON.stringify(cart));
-  }, [cart]);
+    if (!user || !user.location) return;
+
+    console.log("Starting background location monitor...");
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const currentLat = position.coords.latitude;
+        const currentLng = position.coords.longitude;
+        const regLat = user.location!.latitude;
+        const regLng = user.location!.longitude;
+        
+        // Calculate distance using Service Helper
+        const distance = mockService.getDistanceFromLatLonInKm(regLat, regLng, currentLat, currentLng);
+
+        if (distance > 20) { // Strict 20km limit
+             console.error(`SECURITY VIOLATION: User moved ${distance.toFixed(2)}km from registered location.`);
+             alert("SECURITY ALERT: You have moved beyond the allowed radius of your registered location. Session terminated.");
+             mockService.logout();
+        }
+      },
+      (err) => console.warn("Background location monitor warning:", err),
+      { 
+        enableHighAccuracy: true, 
+        timeout: 10000, 
+        maximumAge: 5000 
+      }
+    );
+
+    return () => {
+      console.log("Stopping background location monitor.");
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [user]);
+
 
   const login = async (email: string) => {
      console.log("Use direct mockService call");
@@ -67,21 +105,33 @@ const App: React.FC = () => {
 
   const logout = () => {
     mockService.logout();
-    // State update handled by subscription
     setCart([]);
   };
 
   const addToCart = (courseId: string) => {
     if (!cart.includes(courseId)) {
-      setCart([...cart, courseId]);
+      const newCart = [...cart, courseId];
+      setCart(newCart);
+      if (user) {
+        mockService.updateUserCart(user.id, newCart);
+      }
     }
   };
 
   const removeFromCart = (courseId: string) => {
-    setCart(cart.filter(id => id !== courseId));
+    const newCart = cart.filter(id => id !== courseId);
+    setCart(newCart);
+    if (user) {
+      mockService.updateUserCart(user.id, newCart);
+    }
   };
 
-  const clearCart = () => setCart([]);
+  const clearCart = () => {
+    setCart([]);
+    if (user) {
+      mockService.updateUserCart(user.id, []);
+    }
+  };
 
   if (!isInitialized) {
     // Loading Screen while Firebase connects

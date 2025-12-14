@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ShoppingCart, LogOut, BookOpen, User as UserIcon, Clock, MapPin, Mail, X, Home, Info, Key } from 'lucide-react';
+import { ShoppingCart, LogOut, BookOpen, User as UserIcon, Clock, MapPin, Mail, X, Home, Info, Terminal } from 'lucide-react';
 import { useAuth } from '../App';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -60,9 +60,16 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               <button onClick={() => navigate('/about')} className="flex items-center gap-1 text-sm text-slate-300 hover:text-cyan-400 transition-colors">
                 <Info size={16} /> <span className="hidden sm:inline">About Us</span>
               </button>
-              <button onClick={() => navigate('/code-generator')} className="flex items-center gap-1 text-sm text-slate-300 hover:text-fuchsia-400 transition-colors">
-                <Key size={16} /> <span className="hidden sm:inline">Code Gen</span>
-              </button>
+
+              {/* Code Generator - VISIBLE ONLY ON LANDING PAGE */}
+              {isLandingPage && (
+                <button 
+                  onClick={() => navigate('/code-generator')}
+                  className="flex items-center gap-1 text-sm text-fuchsia-400 hover:text-fuchsia-300 transition-colors border border-fuchsia-500/30 px-2 py-1 rounded bg-fuchsia-900/10"
+                >
+                  <Terminal size={14} /> <span className="hidden sm:inline">Code Gen</span>
+                </button>
+              )}
             </div>
 
             {/* User Controls - HIDDEN ON LANDING PAGE, visible elsewhere if logged in */}
