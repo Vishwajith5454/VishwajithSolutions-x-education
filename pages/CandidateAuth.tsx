@@ -3,290 +3,219 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
 import { Button, Input, Toast } from '../components/UI';
-import { MapPin, AlertTriangle, ShieldCheck, CheckSquare, Square, RefreshCw, Satellite, Wifi } from 'lucide-react';
+import { MapPin, AlertTriangle, ShieldCheck, CheckSquare, Square, RefreshCw } from 'lucide-react';
 import { mockService } from '../services/mockService';
 import { LocationCoords } from '../types';
-
-type AuthStatus = 'idle' | 'acquiring_location' | 'verifying' | 'success';
 
 export const CandidateAuth: React.FC = () => {
   const navigate = useNavigate();
   const { user, setUser } = useAuth(); 
   
   const [isRegisterMode, setIsRegisterMode] = useState(false);
-  const [status, setStatus] = useState<AuthStatus>('idle');
+  const [status, setStatus] = useState<'idle' | 'locating' | 'authenticating' | 'otp_required'>('idle');
   const [error, setError] = useState('');
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
 
-  // Form State
+  // Auth State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
+  
+  // OTP State
+  const [otp, setOtp] = useState('');
+  const [tempUid, setTempUid] = useState('');
+  const [otpMessage, setOtpMessage] = useState('');
 
-  // Redirect if already logged in
+  // Location Consent
+  const [consentLocation, setConsentLocation] = useState(false);
+
   useEffect(() => {
-    if (user) {
-      navigate('/courses', { replace: true });
-    }
+    if (user) navigate('/courses', { replace: true });
   }, [user, navigate]);
 
-  // Load remembered email on mount
-  useEffect(() => {
-    if (!isRegisterMode) {
-      const savedEmail = localStorage.getItem('remembered_email');
-      if (savedEmail) {
-        setEmail(savedEmail);
-        setRememberMe(true);
-      }
-    }
-  }, [isRegisterMode]);
+  // --- 4 Second Timeout GPS Strategy ---
+  const getClientGps = async (): Promise<LocationCoords | undefined> => {
+    if (!consentLocation) return undefined;
+    if (!navigator.geolocation) return undefined;
 
-  // --- ROBUST LOCATION STRATEGY (TIERED) ---
-  const getLocation = async (): Promise<LocationCoords> => {
-    if (!navigator.geolocation) {
-      throw new Error("Geolocation is not supported by your browser.");
-    }
+    return new Promise((resolve) => {
+        let isResolved = false;
 
-    const getPosition = (options: PositionOptions): Promise<GeolocationPosition> => {
-      return new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, options);
-      });
-    };
+        const handleSuccess = (pos: GeolocationPosition) => {
+            if (isResolved) return;
+            isResolved = true;
+            resolve({
+                latitude: pos.coords.latitude,
+                longitude: pos.coords.longitude,
+                accuracy: pos.coords.accuracy,
+                source: 'client_gps'
+            });
+        };
 
-    // TIER 1: High Accuracy (GPS)
-    // Relaxed constraints: 10s timeout, accept 2 min old cache
-    try {
-      console.log("Attempting Tier 1 Location (High Accuracy)...");
-      const position = await getPosition({ 
-        enableHighAccuracy: true, 
-        timeout: 10000, 
-        maximumAge: 120000 
-      });
-      return { latitude: position.coords.latitude, longitude: position.coords.longitude };
-    } catch (err: any) {
-      console.warn("Tier 1 failed:", err.message);
-      if (err.code === 1) throw new Error("Location permission denied. Please enable in browser settings.");
-    }
+        const handleError = (err: GeolocationPositionError) => {
+            if (isResolved) return;
+            isResolved = true;
+            // Only log actual errors, suppress timeout noise
+            if (err.code !== 3) {
+                console.warn("GPS Access Failed:", err.message);
+            } else {
+                console.log("GPS timed out, falling back to IP.");
+            }
+            resolve(undefined);
+        };
 
-    // TIER 2: Network Location (WiFi/Cell)
-    // Very relaxed: 20s timeout, accept ANY cached position
-    try {
-      console.log("Attempting Tier 2 Location (Network/Fallback)...");
-      const fallbackPosition = await getPosition({ 
-        enableHighAccuracy: false, 
-        timeout: 20000,            
-        maximumAge: Infinity       
-      });
-      return { latitude: fallbackPosition.coords.latitude, longitude: fallbackPosition.coords.longitude };
-    } catch (fallbackErr: any) {
-      console.error("Tier 2 failed:", fallbackErr);
-      let msg = "Could not verify location.";
-      if (fallbackErr.code === 1) msg = "Location permission denied.";
-      else if (fallbackErr.code === 2) msg = "GPS/Network signal unavailable.";
-      else if (fallbackErr.code === 3) msg = "Location request timed out. Please move to an open area.";
-      throw new Error(msg);
-    }
+        const timeoutId = setTimeout(() => {
+            if (isResolved) return;
+            isResolved = true;
+            console.log("GPS Timeout - Proceeding with IP Only");
+            resolve(undefined);
+        }, 4000);
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                clearTimeout(timeoutId);
+                handleSuccess(pos);
+            },
+            (err) => {
+                clearTimeout(timeoutId);
+                handleError(err);
+            },
+            { enableHighAccuracy: true, timeout: 4000, maximumAge: 60000 }
+        );
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setStatus('acquiring_location');
-
-    const cleanEmail = email.toLowerCase().trim();
+    setStatus('locating');
 
     try {
-      // 1. Get Location
-      const location = await getLocation();
-      console.log("Location acquired successfully:", location);
-
-      // 2. Auth Logic
-      setStatus('verifying');
+      // 1. Attempt Client GPS (Optional/Secondary)
+      const clientGps = await getClientGps();
       
-      let authenticatedUser;
+      setStatus('authenticating');
 
+      let response;
       if (isRegisterMode) {
-        authenticatedUser = await mockService.registerCandidate(cleanEmail, username, password, location);
-        setToast({ msg: "Registration Successful! Redirecting...", type: 'success' });
+        response = await mockService.registerCandidate(email, username, password, clientGps);
       } else {
-        authenticatedUser = await mockService.loginCandidate(cleanEmail, password, location);
-        setToast({ msg: "Identity Verified. Redirecting...", type: 'success' });
+        response = await mockService.loginCandidate(email, password, clientGps);
       }
 
-      // Handle Remember Me
-      if (!isRegisterMode) {
-        if (rememberMe) {
-          localStorage.setItem('remembered_email', cleanEmail);
-        } else {
-          localStorage.removeItem('remembered_email');
-        }
+      // 2. Handle Decision Tree Response
+      if (response.status === 'SUCCESS' && response.user) {
+         setUser(response.user);
+         setToast({ msg: "Access Granted", type: 'success' });
+         // navigate handled by useEffect
+      } else if (response.status === 'REQUIRE_OTP') {
+         setStatus('otp_required');
+         setTempUid(response.tempToken || '');
+         setOtpMessage(`Location mismatch detected (${response.action}). Enter the code sent to ${response.otpSentTo}`);
+         setToast({ msg: "Security Check Required", type: 'error' });
+      } else {
+         setError(response.message || "Access Denied");
+         setStatus('idle');
       }
-
-      // Success State
-      setStatus('success');
-      
-      setTimeout(() => {
-        setUser(authenticatedUser);
-        navigate('/courses', { replace: true });
-      }, 1500);
 
     } catch (err: any) {
-      console.error("Auth Process Failed:", err);
+      console.error(err);
+      setError(err.message || "Connection Error");
       setStatus('idle');
-      
-      let msg = "An unexpected error occurred.";
-      if (err?.message) msg = err.message;
-      else if (typeof err === 'string') msg = err;
-
-      // User friendly error mapping
-      if (msg.includes("auth/invalid-email")) msg = "Invalid email address format.";
-      if (msg.includes("auth/weak-password")) msg = "Password should be at least 6 characters.";
-      if (msg.includes("auth/wrong-password")) msg = "Invalid credentials.";
-      if (msg.includes("auth/user-not-found")) msg = "User not found. Please register.";
-
-      setError(msg);
-      setToast({ msg: msg, type: 'error' });
     }
   };
 
-  const getButtonText = () => {
-    switch (status) {
-      case 'acquiring_location': return 'Triangulating Position...';
-      case 'verifying': return 'Verifying Credentials...';
-      case 'success': return 'Access Granted';
-      default: return isRegisterMode ? 'Register Candidate' : 'Access Portal';
-    }
+  const handleOtpVerify = async () => {
+      try {
+          // Emulate verifying OTP
+          const response = await mockService.verifyLoginOtp(tempUid, otp);
+          if (response.status === 'SUCCESS' && response.user) {
+              setUser(response.user);
+              setToast({ msg: "Identity Confirmed", type: 'success' });
+          } else {
+              setError("Invalid OTP");
+          }
+      } catch (e) {
+          setError("Verification Failed");
+      }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
       
-      <div className="w-full max-w-md glass-card p-1 rounded-2xl relative overflow-hidden flex flex-col transition-all duration-300">
-        {/* Decorative Background */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none"></div>
-
-        {/* Tab Switcher */}
-        <div className="flex bg-slate-900/50 p-1 rounded-t-2xl border-b border-white/5">
-          <button 
-            className={`flex-1 py-3 text-sm font-display font-bold uppercase tracking-wider transition-colors rounded-lg ${!isRegisterMode ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
-            onClick={() => { 
-              if(status === 'idle') { 
-                setIsRegisterMode(false); 
-                setError(''); 
-                const saved = localStorage.getItem('remembered_email');
-                if (saved) {
-                  setEmail(saved);
-                  setRememberMe(true);
-                }
-              } 
-            }}
-            disabled={status !== 'idle'}
-          >
-            Login
-          </button>
-          <button 
-            className={`flex-1 py-3 text-sm font-display font-bold uppercase tracking-wider transition-colors rounded-lg ${isRegisterMode ? 'bg-fuchsia-600/20 text-fuchsia-400' : 'text-slate-500 hover:text-slate-300'}`}
-            onClick={() => { 
-              if(status === 'idle') { 
-                setIsRegisterMode(true); 
-                setError(''); 
-                setEmail('');
-                setPassword('');
-                setUsername('');
-              } 
-            }}
-            disabled={status !== 'idle'}
-          >
-            Register
-          </button>
-        </div>
-
-        <div className="p-8">
-          <h2 className="font-display text-2xl font-bold mb-2 flex items-center gap-2">
-            {isRegisterMode ? 'Join the Future' : 'Welcome Back'}
-            {status === 'success' && <ShieldCheck className="text-emerald-400 animate-pulse" />}
-          </h2>
-          <p className="text-slate-400 mb-8 text-sm">
-            {isRegisterMode 
-              ? 'Create a secure account. Your location will be bound to your identity.' 
-              : 'Sign in to access your dashboard. Strict location verification required.'}
-          </p>
-
-          {error && (
-            <div className="mb-6 bg-red-950/50 border border-red-500/30 p-4 rounded text-red-400 text-sm flex items-start gap-3 animate-in slide-in-from-top-2">
-              <AlertTriangle className="shrink-0 mt-0.5" size={16} />
-              <span>{error}</span>
+      <div className="w-full max-w-md glass-card p-8 rounded-2xl relative overflow-hidden">
+        
+        {/* OTP MODAL OVERLAY */}
+        {status === 'otp_required' && (
+            <div className="absolute inset-0 z-20 bg-slate-900/95 flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
+                <ShieldCheck size={48} className="text-yellow-500 mb-4 animate-bounce" />
+                <h3 className="font-display text-xl font-bold text-white mb-2">Unusual Location</h3>
+                <p className="text-sm text-slate-400 mb-6">{otpMessage}</p>
+                <Input 
+                    placeholder="Enter 6-digit Code" 
+                    value={otp} 
+                    onChange={(e) => setOtp(e.target.value)}
+                    className="text-center text-xl tracking-[0.5em] font-mono mb-4"
+                />
+                <Button onClick={handleOtpVerify} className="w-full mb-2">Verify</Button>
+                <button onClick={() => setStatus('idle')} className="text-slate-500 text-xs hover:text-white">Cancel Login</button>
             </div>
-          )}
+        )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Normal Auth Form */}
+        <h2 className="font-display text-2xl font-bold mb-2 text-white">
+            {isRegisterMode ? 'Secure Registration' : 'Restricted Access'}
+        </h2>
+        <p className="text-slate-400 mb-6 text-sm">
+            {isRegisterMode 
+              ? 'Your registration location will be permanently bound to this account.' 
+              : 'System verifies your physical location against your registered home base.'}
+        </p>
+
+        {error && (
+            <div className="mb-6 bg-red-950/50 border border-red-500/30 p-4 rounded text-red-400 text-sm flex items-start gap-3">
+              <AlertTriangle className="shrink-0" size={16} /> {error}
+            </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
             {isRegisterMode && (
-              <Input 
-                label="Username" 
-                placeholder="Candidate_One" 
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required={isRegisterMode}
-                disabled={status !== 'idle'}
-              />
+              <Input label="Username" value={username} onChange={(e) => setUsername(e.target.value)} required />
             )}
+            <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
 
-            <Input 
-              label="Email Address" 
-              type="email" 
-              placeholder="user@example.com" 
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              disabled={status !== 'idle'}
-            />
-
-            <Input 
-              label="Password" 
-              type="password" 
-              placeholder="••••••••" 
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              disabled={status !== 'idle'}
-            />
-
-            {!isRegisterMode && (
-              <div className="flex items-center gap-2 cursor-pointer group" onClick={() => setRememberMe(!rememberMe)}>
-                <div className={`transition-colors duration-300 ${rememberMe ? 'text-cyan-400' : 'text-slate-600 group-hover:text-slate-400'}`}>
-                  {rememberMe ? <CheckSquare size={20} /> : <Square size={20} />}
-                </div>
-                <label className="text-sm text-slate-400 cursor-pointer select-none group-hover:text-cyan-200 transition-colors">
-                  Remember Me
+            <div className="bg-slate-900/50 p-3 rounded border border-white/5">
+                <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className={`mt-1 w-4 h-4 border rounded flex items-center justify-center transition-colors ${consentLocation ? 'bg-cyan-600 border-cyan-600' : 'border-slate-500'}`}>
+                        {consentLocation && <div className="w-2 h-2 bg-white rounded-full" />}
+                    </div>
+                    <input type="checkbox" className="hidden" checked={consentLocation} onChange={() => setConsentLocation(!consentLocation)} />
+                    <div className="text-xs text-slate-400 group-hover:text-slate-300 transition-colors">
+                        <span className="text-cyan-400 font-bold block mb-1">ENHANCE SECURITY (OPTIONAL)</span>
+                        Allow browser GPS to confirm my location if IP address is inaccurate.
+                    </div>
                 </label>
-              </div>
-            )}
-
-            <div className="pt-2 text-xs text-slate-500 flex items-center gap-2 min-h-[20px]">
-              {status === 'acquiring_location' ? (
-                <>
-                   <RefreshCw size={12} className="text-fuchsia-400 animate-spin" />
-                   <span className="text-fuchsia-400">Synchronizing Global Position...</span>
-                </>
-              ) : (
-                <>
-                   <MapPin size={12} className="text-cyan-500" />
-                   <span>Secure geo-tagging active (Radius: 20KM).</span>
-                </>
-              )}
             </div>
 
             <Button 
-              type="submit" 
-              className={`w-full mt-4 ${status === 'success' ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/50' : ''}`} 
-              isLoading={status === 'acquiring_location' || status === 'verifying'}
-              disabled={status === 'success'}
+                type="submit" 
+                className="w-full mt-2"
+                isLoading={status === 'locating' || status === 'authenticating'}
+                disabled={status === 'locating' || status === 'authenticating'}
             >
-              {getButtonText()}
+                {status === 'locating' ? 'Triangulating...' : (isRegisterMode ? 'Register' : 'Authenticate')}
             </Button>
-          </form>
+        </form>
+
+        <div className="mt-6 text-center">
+            <button 
+                onClick={() => { setIsRegisterMode(!isRegisterMode); setError(''); }}
+                className="text-sm text-slate-500 hover:text-cyan-400 transition-colors"
+            >
+                {isRegisterMode ? 'Already have an ID? Login' : 'New Candidate? Register'}
+            </button>
         </div>
       </div>
     </div>

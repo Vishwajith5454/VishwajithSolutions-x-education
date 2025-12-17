@@ -2,6 +2,8 @@
 export interface LocationCoords {
   latitude: number;
   longitude: number;
+  accuracy?: number;
+  source?: 'ip_geo' | 'client_gps';
 }
 
 export type CourseCategory = 'Class 9' | 'Class 10' | 'Class 11' | 'Class 12' | 'CUET' | 'Sanskrit';
@@ -11,7 +13,7 @@ export interface Course {
   title: string;
   description: string;
   instructor: string;
-  price: number; // Stored in USD for backend consistency
+  price: number;
   duration: string;
   thumbnail: string;
   previewVideoUrl?: string;
@@ -24,10 +26,19 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  purchasedCourses: string[]; // Array of Course IDs
-  cart: string[]; // Added cart persistence
-  location?: LocationCoords;
-  sessionExpiry?: number; // Timestamp stored in DB
+  purchasedCourses: string[];
+  cart: string[];
+  savedLocation?: LocationCoords; // The authoritative registration location
+  sessionExpiry?: number;
+}
+
+export interface AuthResponse {
+  status: 'SUCCESS' | 'REQUIRE_OTP' | 'DENIED';
+  user?: User;
+  message?: string;
+  action?: string;
+  otpSentTo?: string; // Masked email
+  tempToken?: string; // For 2nd step verification
 }
 
 export interface CartItem {
@@ -46,7 +57,7 @@ export interface Order {
 export interface RedemptionCode {
   id?: string;
   code: string;
-  userEmail: string; // The code is locked to this email
+  userEmail: string;
   courseIds: string[];
   generatedBy: string;
   createdAt: string;
@@ -56,7 +67,7 @@ export interface RedemptionCode {
 export interface AuthContextType {
   user: User | null;
   setUser: (user: User | null) => void;
-  sessionExpiry: number | null; // Timestamp
+  sessionExpiry: number | null;
   login: (email: string) => Promise<void>;
   logout: () => void;
   cart: string[];
